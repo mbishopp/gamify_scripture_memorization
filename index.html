@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Verse Quest — Scripture Memorization</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app"></div>
+
+<!-- Plain scripts (not type="module") so this also works opened directly
+     from disk (file://), where ES module loading is blocked by CORS. -->
+<script src="js/bible-data.js"></script>
+<script src="js/bible-api.js"></script>
+<script src="js/challenges.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ui.js"></script>
+<script>
+  UI.renderHome();
+</script>
+</body>
+</html>
