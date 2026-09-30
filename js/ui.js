@@ -38,7 +38,7 @@ const UI = (() => {
   function renderHeader() {
     const state = Game.getState();
     return el("div", { class: "app-header" }, [
-      el("div", { class: "brand" }, "📖 Verse Quest"),
+      el("button", { class: "brand", onclick: () => renderHome() }, "📖 Verses"),
       el("div", { class: "stats" }, [
         el("span", { class: "stat coins" }, fmtCoins(state.coins)),
         el("span", { class: "stat streak" }, `🔥 ${state.streak.count}`)
@@ -59,6 +59,7 @@ const UI = (() => {
     container.appendChild(
       el("div", { class: "screen screen-home" }, [
         renderHeader(),
+        el("h2", { class: "path-heading" }, "Your path"),
         el("div", { class: "path" }, nodes),
         el(
           "button",
@@ -71,7 +72,8 @@ const UI = (() => {
 
   function renderPathNode(lesson, index) {
     const progress = lesson.progress || 0;
-    const node = el("div", { class: "path-node-wrap", style: index % 2 ? "margin-left:70px" : "" }, [
+    const offsets = [0, 48, 80, 48]; // gentle zig-zag like a trail
+    const node = el("div", { class: "path-node-wrap", style: `margin-left:${offsets[index % 4]}px` }, [
       el(
         "button",
         {
@@ -82,148 +84,397 @@ const UI = (() => {
       ),
       el("div", { class: "path-node-label" }, [
         el("div", { class: "path-node-title" }, lesson.label),
+        el("div", { class: "path-node-meta" }, `${(lesson.translationId || "").toUpperCase()} · ${progress}%`),
         el("div", { class: "progress-bar" }, [
           el("div", { class: "progress-bar-fill", style: `width:${progress}%` })
         ])
-      ])
+      ]),
+      el(
+        "button",
+        {
+          class: "path-node-remove",
+          title: "Remove from path",
+          "aria-label": `Remove ${lesson.label}`,
+          onclick: () => {
+            if (confirm(`Remove ${lesson.label} from your path?`)) {
+              Game.removeLesson(lesson.id);
+              renderHome();
+            }
+          }
+        },
+        "×"
+      )
     ]);
     return node;
   }
 
-  // --------------------------------------------------------- setup screen
-  function renderSetup() {
-    const container = root();
-    clear(container);
-    const state = Game.getState();
+  // --------------------------------------------------------- setup flow
+  // v0.21: three steps instead of dropdowns —
+  //   1. pick a book (grid, grouped by testament)
+  //   2. pick a chapter (grid) — or memorize the whole book
+  //   3. read the whole chapter and tick / highlight the verses to memorize
 
-    const translationSelect = el(
+  // Compress [16,17,18,21] -> "16-18, 21"
+  function formatVerseList(nums) {
+    const sorted = [...nums].sort((a, b) => a - b);
+    const parts = [];
+    let start = null;
+    let prev = null;
+    for (const n of sorted) {
+      if (start === null) {
+        start = prev = n;
+      } else if (n === prev + 1) {
+        prev = n;
+      } else {
+        parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+        start = prev = n;
+      }
+    }
+    if (start !== null) parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+    return parts.join(", ");
+  }
+
+  function translationPicker(onChange) {
+    const state = Game.getState();
+    const select = el(
       "select",
-      { id: "sel-translation" },
+      { class: "translation-select", "aria-label": "Translation" },
       TRANSLATIONS.map((t) =>
         el("option", { value: t.id, ...(t.id === state.translation ? { selected: "selected" } : {}) }, t.name)
       )
     );
+    select.addEventListener("change", () => {
+      Game.setTranslation(select.value);
+      if (onChange) onChange(select.value);
+    });
+    return el("div", { class: "translation-row" }, [el("span", { class: "translation-label" }, "Translation"), select]);
+  }
 
-    const scopeSelect = el("select", { id: "sel-scope" }, [
-      el("option", { value: "verse" }, "Single verse"),
-      el("option", { value: "passage" }, "Multiple verses"),
-      el("option", { value: "chapter" }, "Whole chapter"),
-      el("option", { value: "book" }, "Whole book (one lesson per chapter)")
-    ]);
+  function crumbs(items) {
+    // items: [{ text, onclick? }]
+    const parts = [];
+    items.forEach((it, i) => {
+      if (i) parts.push(el("span", { class: "crumb-sep" }, "›"));
+      parts.push(
+        it.onclick
+          ? el("button", { class: "crumb crumb-link", onclick: it.onclick }, it.text)
+          : el("span", { class: "crumb" }, it.text)
+      );
+    });
+    return el("nav", { class: "crumbs" }, parts);
+  }
 
-    const bookSelect = el(
-      "select",
-      { id: "sel-book" },
-      BIBLE_BOOKS.map((b) => el("option", { value: b.id }, b.name))
-    );
+  // Step 1 — book grid
+  function renderSetup() {
+    const container = root();
+    clear(container);
 
-    const chapterSelect = el("select", { id: "sel-chapter" });
-    const verseRow = el("div", { class: "form-row", id: "verse-row" }, [
-      el("label", {}, "Verse(s)"),
-      el("input", { type: "number", id: "inp-verse-start", min: "1", value: "1", class: "verse-input" }),
-      el("span", {}, " to "),
-      el("input", { type: "number", id: "inp-verse-end", min: "1", value: "1", class: "verse-input" })
-    ]);
+    const section = (title, testament) =>
+      el("section", { class: "book-section" }, [
+        el("h3", { class: "section-title" }, title),
+        el(
+          "div",
+          { class: "book-grid" },
+          BIBLE_BOOKS.filter((b) => b.testament === testament).map((b) =>
+            el("button", { class: "book-chip", onclick: () => renderChapterPicker(b.id) }, [
+              el("span", { class: "book-chip-name" }, b.name),
+              el("span", { class: "book-chip-meta" }, `${b.chapters} ch`)
+            ])
+          )
+        )
+      ]);
 
-    function populateChapters() {
-      const book = getBookById(bookSelect.value);
-      clear(chapterSelect);
-      for (let c = 1; c <= book.chapters; c++) {
-        chapterSelect.appendChild(el("option", { value: String(c) }, `Chapter ${c}`));
-      }
-    }
-    populateChapters();
-    bookSelect.addEventListener("change", populateChapters);
-
-    function syncScopeVisibility() {
-      const scope = scopeSelect.value;
-      chapterSelect.parentElement.style.display = scope === "book" ? "none" : "";
-      verseRow.style.display = scope === "verse" || scope === "passage" ? "" : "none";
-    }
-    scopeSelect.addEventListener("change", syncScopeVisibility);
-
-    const chapterRow = el("div", { class: "form-row" }, [el("label", {}, "Chapter"), chapterSelect]);
-
-    const status = el("div", { class: "form-status" });
-
-    const addBtn = el(
-      "button",
-      {
-        class: "btn btn-primary",
-        onclick: () => handleAdd()
-      },
-      "Add to my path"
-    );
-
-    async function handleAdd() {
-      addBtn.disabled = true;
-      status.textContent = "Loading passage…";
-      try {
-        const translationId = translationSelect.value;
-        Game.setTranslation(translationId);
-        const scope = scopeSelect.value;
-        const book = getBookById(bookSelect.value);
-
-        if (scope === "book") {
-          const lessonId = `book:${book.id}:${translationId}`;
-          Game.upsertLesson(lessonId, {
-            label: book.name,
-            kind: "book",
-            bookId: book.id,
-            translationId,
-            progress: 0,
-            chapterProgress: {}
-          });
-        } else if (scope === "chapter") {
-          const chapter = chapterSelect.value;
-          const data = await BibleAPI.fetchChapter(book.name, chapter, translationId);
-          const lessonId = `chapter:${book.id}:${chapter}:${translationId}`;
-          Game.upsertLesson(lessonId, {
-            label: `${book.name} ${chapter}`,
-            kind: "single",
-            reference: data.reference,
-            translationId,
-            progress: 0
-          });
-        } else {
-          const chapter = chapterSelect.value;
-          const vStart = parseInt(document.getElementById("inp-verse-start").value, 10) || 1;
-          const vEnd =
-            scope === "verse" ? vStart : parseInt(document.getElementById("inp-verse-end").value, 10) || vStart;
-          const data = await BibleAPI.fetchVerseRange(book.name, chapter, vStart, vEnd, translationId);
-          const lessonId = `verse:${book.id}:${chapter}:${vStart}-${vEnd}:${translationId}`;
-          Game.upsertLesson(lessonId, {
-            label: `${book.name} ${chapter}:${vStart}${vEnd !== vStart ? "-" + vEnd : ""}`,
-            kind: "single",
-            reference: data.reference,
-            translationId,
-            progress: 0
-          });
-        }
-        renderHome();
-      } catch (err) {
-        console.error(err);
-        status.textContent = `Couldn't load that passage (${err.message}). Try again.`;
-        addBtn.disabled = false;
-      }
-    }
-
-    syncScopeVisibility();
+    const filter = el("input", {
+      type: "search",
+      class: "book-filter",
+      placeholder: "Find a book…",
+      "aria-label": "Find a book"
+    });
+    filter.addEventListener("input", () => {
+      const q = filter.value.trim().toLowerCase();
+      container.querySelectorAll(".book-chip").forEach((chip) => {
+        const name = chip.querySelector(".book-chip-name").textContent.toLowerCase();
+        chip.style.display = !q || name.includes(q) ? "" : "none";
+      });
+    });
 
     container.appendChild(
       el("div", { class: "screen screen-setup" }, [
         renderHeader(),
-        el("h2", {}, "Choose a passage"),
-        el("div", { class: "form-row" }, [el("label", {}, "Translation"), translationSelect]),
-        el("div", { class: "form-row" }, [el("label", {}, "Memorize"), scopeSelect]),
-        el("div", { class: "form-row" }, [el("label", {}, "Book"), bookSelect]),
-        chapterRow,
-        verseRow,
-        status,
-        addBtn,
-        el("button", { class: "btn btn-link", onclick: () => renderHome() }, "Cancel")
+        crumbs([{ text: "My path", onclick: () => renderHome() }, { text: "Choose a book" }]),
+        translationPicker(),
+        filter,
+        section("Old Testament", "OT"),
+        section("New Testament", "NT")
       ])
     );
+    filter.focus();
+  }
+
+  // Step 2 — chapter grid (+ whole-book option)
+  function renderChapterPicker(bookId) {
+    const container = root();
+    clear(container);
+    const book = getBookById(bookId);
+
+    const chips = [];
+    for (let c = 1; c <= book.chapters; c++) {
+      chips.push(el("button", { class: "chapter-chip", onclick: () => renderVersePicker(bookId, c) }, `${c}`));
+    }
+
+    const addBook = () => {
+      const translationId = Game.getState().translation;
+      Game.upsertLesson(`book:${book.id}:${translationId}`, {
+        label: book.name,
+        kind: "book",
+        bookId: book.id,
+        translationId,
+        progress: 0,
+        chapterProgress: {}
+      });
+      renderHome();
+    };
+
+    container.appendChild(
+      el("div", { class: "screen screen-setup" }, [
+        renderHeader(),
+        crumbs([
+          { text: "My path", onclick: () => renderHome() },
+          { text: "Books", onclick: () => renderSetup() },
+          { text: book.name }
+        ]),
+        el("h2", {}, book.name),
+        el("p", { class: "hint" }, "Pick a chapter to read it and choose verses."),
+        el("div", { class: "chapter-grid" }, chips),
+        el("div", { class: "divider" }, "or"),
+        el(
+          "button",
+          { class: "btn btn-secondary btn-block", onclick: addBook },
+          `Memorize all of ${book.name} (${book.chapters} chapter lessons)`
+        )
+      ])
+    );
+  }
+
+  // Step 3 — full chapter with selectable verses
+  async function renderVersePicker(bookId, chapterNum, preselected = []) {
+    const container = root();
+    clear(container);
+    const book = getBookById(bookId);
+    const selected = new Set(preselected);
+
+    const nav = crumbs([
+      { text: "My path", onclick: () => renderHome() },
+      { text: "Books", onclick: () => renderSetup() },
+      { text: book.name, onclick: () => renderChapterPicker(bookId) },
+      { text: `Chapter ${chapterNum}` }
+    ]);
+
+    const passageBox = el("div", { class: "passage" }, el("p", { class: "hint" }, "Loading chapter…"));
+    const selectionLabel = el("div", { class: "selection-label" });
+    const addBtn = el("button", { class: "btn btn-primary" }, "Add to my path");
+    const status = el("div", { class: "form-status" });
+
+    const prevBtn = el(
+      "button",
+      {
+        class: "btn btn-ghost",
+        onclick: () => renderVersePicker(bookId, chapterNum - 1)
+      },
+      "‹ Prev"
+    );
+    const nextBtn = el(
+      "button",
+      {
+        class: "btn btn-ghost",
+        onclick: () => renderVersePicker(bookId, chapterNum + 1)
+      },
+      "Next ›"
+    );
+    if (chapterNum <= 1) prevBtn.disabled = true;
+    if (chapterNum >= book.chapters) nextBtn.disabled = true;
+
+    const toolbar = el("div", { class: "passage-toolbar" }, [
+      prevBtn,
+      el("div", { class: "toolbar-center" }, [
+        el("button", { class: "btn btn-ghost", onclick: () => setAll(true) }, "Select all"),
+        el("button", { class: "btn btn-ghost", onclick: () => setAll(false) }, "Clear")
+      ]),
+      nextBtn
+    ]);
+
+    const footer = el("div", { class: "selection-footer" }, [selectionLabel, addBtn]);
+
+    container.appendChild(
+      el("div", { class: "screen screen-verses" }, [
+        renderHeader(),
+        nav,
+        el("h2", {}, `${book.name} ${chapterNum}`),
+        translationPicker(() => renderVersePicker(bookId, chapterNum, [...selected])),
+        el(
+          "p",
+          { class: "hint" },
+          "Tap verses to highlight them. Drag across verses, or Shift-click, to select a range."
+        ),
+        toolbar,
+        passageBox,
+        status,
+        footer
+      ])
+    );
+
+    let verses = [];
+    const rows = new Map(); // verse number -> row element
+
+    function refresh() {
+      rows.forEach((row, n) => {
+        const on = selected.has(n);
+        row.classList.toggle("selected", on);
+        row.querySelector("input").checked = on;
+      });
+      const count = selected.size;
+      if (count) {
+        selectionLabel.textContent = `${book.name} ${chapterNum}:${formatVerseList(selected)} · ${count} verse${
+          count > 1 ? "s" : ""
+        }`;
+      } else {
+        selectionLabel.textContent = "No verses selected";
+      }
+      addBtn.disabled = count === 0;
+      footer.classList.toggle("has-selection", count > 0);
+    }
+
+    function setAll(on) {
+      verses.forEach((v) => (on ? selected.add(v.verse) : selected.delete(v.verse)));
+      refresh();
+    }
+
+    // Selection interactions: click toggles, shift-click selects a range,
+    // press-and-drag paints (select or deselect, based on the first verse).
+    let anchor = null;
+    let dragMode = null; // true = selecting, false = deselecting
+
+    function applyRange(a, b, on) {
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      for (let n = lo; n <= hi; n++) {
+        if (!rows.has(n)) continue;
+        on ? selected.add(n) : selected.delete(n);
+      }
+    }
+
+    // Touch/pen: a plain tap toggles (handled on click, so scrolling the
+    // chapter with a finger doesn't accidentally select verses).
+    function onRowClick(n, e) {
+      if (e.pointerType === "mouse" || lastPointerType === "mouse") return;
+      if (e.shiftKey && anchor !== null) applyRange(anchor, n, true);
+      else selected.has(n) ? selected.delete(n) : selected.add(n);
+      anchor = n;
+      refresh();
+    }
+
+    let lastPointerType = null;
+    function onRowPointerDown(n, e) {
+      lastPointerType = e.pointerType;
+      if (e.pointerType !== "mouse") return;
+      if (e.button !== 0) return;
+      if (e.shiftKey && anchor !== null) {
+        applyRange(anchor, n, true);
+        anchor = n;
+        refresh();
+        e.preventDefault();
+        return;
+      }
+      dragMode = !selected.has(n);
+      dragMode ? selected.add(n) : selected.delete(n);
+      anchor = n;
+      refresh();
+      e.preventDefault(); // stop text selection while painting
+    }
+
+    function onRowPointerEnter(n) {
+      if (dragMode === null) return;
+      applyRange(anchor, n, dragMode);
+      refresh();
+    }
+
+    const endDrag = () => {
+      dragMode = null;
+    };
+    document.addEventListener("pointerup", endDrag);
+    document.addEventListener("pointercancel", endDrag);
+
+    addBtn.addEventListener("click", () => {
+      const nums = [...selected].sort((a, b) => a - b);
+      if (!nums.length) return;
+      const translationId = Game.getState().translation;
+      const allSelected = nums.length === verses.length;
+      const label = allSelected
+        ? `${book.name} ${chapterNum}`
+        : `${book.name} ${chapterNum}:${formatVerseList(nums)}`;
+      const lessonId = `verses:${book.id}:${chapterNum}:${nums.join(",")}:${translationId}`;
+      Game.upsertLesson(lessonId, {
+        label,
+        kind: "verses",
+        bookId: book.id,
+        chapter: chapterNum,
+        verses: nums,
+        translationId,
+        progress: (Game.getState().lessons[lessonId] || {}).progress || 0
+      });
+      document.removeEventListener("pointerup", endDrag);
+      document.removeEventListener("pointercancel", endDrag);
+      renderHome();
+    });
+
+    refresh();
+
+    try {
+      const data = await BibleAPI.fetchChapter(book.name, chapterNum, Game.getState().translation);
+      verses = data.verses;
+      clear(passageBox);
+      verses.forEach((v) => {
+        const checkbox = el("input", {
+          type: "checkbox",
+          class: "verse-check",
+          tabindex: "-1",
+          "aria-hidden": "true"
+        });
+        const row = el(
+          "div",
+          {
+            class: "verse-row",
+            role: "checkbox",
+            tabindex: "0",
+            "aria-label": `Verse ${v.verse}`
+          },
+          [checkbox, el("sup", { class: "verse-num" }, `${v.verse}`), el("span", { class: "verse-body" }, v.text)]
+        );
+        row.addEventListener("pointerdown", (e) => onRowPointerDown(v.verse, e));
+        row.addEventListener("pointerenter", () => onRowPointerEnter(v.verse));
+        row.addEventListener("click", (e) => onRowClick(v.verse, e));
+        row.addEventListener("keydown", (e) => {
+          if (e.key === " " || e.key === "Enter") {
+            e.preventDefault();
+            selected.has(v.verse) ? selected.delete(v.verse) : selected.add(v.verse);
+            anchor = v.verse;
+            refresh();
+          }
+        });
+        rows.set(v.verse, row);
+        passageBox.appendChild(row);
+      });
+      // drop any preselected verses that don't exist in this translation
+      [...selected].forEach((n) => rows.has(n) || selected.delete(n));
+      refresh();
+      window.scrollTo(0, 0);
+    } catch (err) {
+      console.error(err);
+      clear(passageBox);
+      passageBox.appendChild(el("p", { class: "warning" }, `Couldn't load this chapter (${err.message}).`));
+      passageBox.appendChild(
+        el("button", { class: "btn btn-secondary", onclick: () => renderVersePicker(bookId, chapterNum) }, "Try again")
+      );
+    }
   }
 
   // -------------------------------------------------------- lesson screen
@@ -241,7 +492,17 @@ const UI = (() => {
     container.appendChild(el("div", { class: "screen" }, [renderHeader(), el("p", {}, "Loading passage…")]));
 
     try {
-      const data = await BibleAPI.fetchPassage(lesson.reference, lesson.translationId);
+      let data;
+      if (lesson.kind === "verses") {
+        // v0.21 lessons: fetch the whole chapter (cached) and keep the chosen verses
+        const book = getBookById(lesson.bookId);
+        const chapter = await BibleAPI.fetchChapter(book.name, lesson.chapter, lesson.translationId);
+        const wanted = new Set(lesson.verses);
+        const verses = chapter.verses.filter((v) => wanted.has(v.verse));
+        data = { ...chapter, verses, fullText: verses.map((v) => v.text).join(" ") };
+      } else {
+        data = await BibleAPI.fetchPassage(lesson.reference, lesson.translationId);
+      }
       runLessonSequence(lessonId, lesson.label, data, (finalAccuracy) => {
         Game.setLessonProgress(lessonId, Math.round(finalAccuracy * 100));
         renderHome();

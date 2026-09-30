@@ -1,4 +1,4 @@
-# Verse Quest — Scripture Memorization (v0.1)
+# Verses — Scripture Memorization (v0.21)
 
 A Duolingo-style web game for memorizing Bible passages, built as a
 single static site (plain HTML/CSS/JS, no build step, no backend).
@@ -8,8 +8,11 @@ single static site (plain HTML/CSS/JS, no build step, no backend).
 - Pick a free, public-domain English translation: WEB, WEBBE, KJV, BBE,
   or OEB-US (served live by [bible-api.com](https://bible-api.com), no
   API key needed).
-- Pick a single verse, a range of verses, a whole chapter, or a whole
-  book (a book becomes a path with one lesson per chapter).
+- Choose a passage in three steps: pick a book (searchable grid) → pick
+  a chapter → read the whole chapter and tap/highlight the verses you
+  want. Drag across verses or Shift-click to select a range; verses
+  don't have to be contiguous (e.g. John 3:16-18, 21). Or memorize a
+  whole book (one lesson per chapter).
 - Each lesson runs you through a sequence of challenges per few-verse
   chunk: read & recall, fill-in-the-blank, type it from memory, and say
   it out loud (uses the browser's Web Speech API, graded against the
@@ -90,3 +93,10 @@ js/ui.js              screen rendering + challenge flow
   translations, better speech-grading leniency (homophones, minor
   variants).
 - v2.x: friends/contacts, shared challenges and leaderboards.
+
+## Changelog
+- v0.21: Renamed to **Verses**. Replaced the dropdown setup with a
+  book → chapter → full-chapter view where verses are selected with
+  checkboxes / highlighting (click, drag, Shift-click, Select all).
+  Refreshed look and feel (Nunito UI font, Literata for scripture text,
+  card-style path with remove buttons). Existing saved progress is kept.
