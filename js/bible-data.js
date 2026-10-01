@@ -80,7 +80,8 @@ const TRANSLATIONS = [
   { id: "webbe", name: "World English Bible, British Edition (WEBBE)" },
   { id: "kjv", name: "King James Version (KJV)" },
   { id: "bbe", name: "Bible in Basic English (BBE)" },
-  { id: "oeb-us", name: "Open English Bible, US Edition (OEB-US)" }
+  { id: "oeb-us", name: "Open English Bible, US Edition (OEB-US)" },
+  { id: "oeb-cw", name: "Open English Bible, Commonwealth Edition (OEB-CW)" }
 ];
 
 function getBookById(id) {

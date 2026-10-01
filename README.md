@@ -6,7 +6,7 @@ single static site (plain HTML/CSS/JS, no build step, no backend).
 ## What v0.1 does
 
 - Pick a free, public-domain English translation: WEB, WEBBE, KJV, BBE,
-  or OEB-US (served live by [bible-api.com](https://bible-api.com), no
+  OEB-US, or OEB-CW (served live by [bible-api.com](https://bible-api.com), no
   API key needed).
 - Choose a passage in three steps: pick a book (searchable grid) → pick
   a chapter → read the whole chapter and tap/highlight the verses you
@@ -101,9 +101,6 @@ tests/                node tests for the grading logic (node tests/challenges.te
 
 ## Roadmap (later versions)
 
-- v0.2: a visual "scan the Bible" browser instead of dropdowns, more
-  translations, better speech-grading leniency (homophones, minor
-  variants).
 - v0.3: speaking is always an option instead of filling in the blanks by typing (more mobile friendly for this type of thing)
 - v2.x: friends/contacts, shared challenges and leaderboards.
 
@@ -111,6 +108,9 @@ tests/                node tests for the grading logic (node tests/challenges.te
 - v0.22: Have a way for the learner to listen to the verse (voice needs to be a more natural speech reader--not a computer sounding one).  This is for when a verse(s) is first displayed (but is optional if the learner wants to listen to the verse).  There needs to be way more ways to practice.  Try first letters taken out, going in small bits (parts of 1st verse; then another part, etc.). The other methods are good, but don't have so many blanks words at first.  Build this up over a few trials. There should be at least 7-10 ways to do each verse in varying forms of difficulty.  Typing the verse is one thing, but saying it is better, so emphasize that.  If a person needs a hint, especially when they are at the write the (entire) verse or say the verse, this should give the first couple of words to get people on the right track.  Allow for try again buttons, but each time reduce the points that are awarded (1st time backwards, is 80% of the points, second is 60% points, 3rd is 30% points).  But if a person wants to use coins to pay for full points, they can do that too.  So if they go back and pay 40 coins, then it is 100% points, 20 coins it is 60% points, etc.  Allow a person to skip any of the lessons, such as speaking (because they might be in a place where they cannot speak).  Always provide a skip button, but do not award any points for skipping.
 
 ## Changelog
+- v0.23: Roadmap v0.2 wrapped up. The visual book/chapter browser (v0.21)
+  and lenient speech grading (v0.22) were already in; this adds the
+  Open English Bible, Commonwealth Edition (OEB-CW) as a sixth translation.
 - v0.22: Much more practice per verse. Passages are split into small
   lessons of 10+ exercises each, from easy to hard (word tiles,
   word-bank blanks, pick the right wording, what comes next, build it
