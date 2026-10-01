@@ -1,4 +1,4 @@
-# Verses — Scripture Memorization (v0.21)
+# Verses — Scripture Memorization (v0.22)
 
 A Duolingo-style web game for memorizing Bible passages, built as a
 single static site (plain HTML/CSS/JS, no build step, no backend).
@@ -13,11 +13,20 @@ single static site (plain HTML/CSS/JS, no build step, no backend).
   want. Drag across verses or Shift-click to select a range; verses
   don't have to be contiguous (e.g. John 3:16-18, 21). Or memorize a
   whole book (one lesson per chapter).
-- Each lesson runs you through a sequence of challenges per few-verse
-  chunk: read & recall, fill-in-the-blank, type it from memory, and say
-  it out loud (uses the browser's Web Speech API, graded against the
-  reference text).
-- Earn coins based on accuracy, and build a daily streak.
+- Each passage is split into short lessons (about one verse each, plus a
+  "Review all" lesson). Each lesson has 10+ exercises that build from
+  easy to hard: listen & read → word tiles → word-bank blanks → pick
+  the right wording → what comes next → more blanks → build it up in
+  small bits → first-letter clues → mostly blanks → say it all from
+  memory.
+- Speaking comes first (Web Speech API, graded leniently for
+  homophones, digits and small slips); typing is always one tap away.
+- Listen to any verse in the most natural voice your browser has
+  (choose voice and speed in ⚙️ Settings).
+- Hints reveal the first couple of words. Every exercise can be skipped
+  (no points). Retries earn 80% / 60% / 30% of the points, or pay
+  20 / 40 / 60 coins to retry for full points.
+- Earn points (⚡) and coins (🪙), and build a daily streak.
 - Progress, coins, and streak are saved in the browser via
   `localStorage` — this is a single-player, single-browser v0.1. Multi
   device sync and friends/challenges are planned for a later version.
@@ -83,8 +92,11 @@ style.css            styling
 js/bible-data.js      static book/chapter list + translation list
 js/bible-api.js       fetch wrapper around bible-api.com
 js/challenges.js      grading logic for each challenge type (pure functions)
-js/game.js            localStorage-backed progress/coins/streak state
-js/ui.js              screen rendering + challenge flow
+js/game.js            localStorage-backed progress/coins/xp/streak/settings
+js/speech.js          text-to-speech (best natural voice) + speech recognition
+js/ui.js              home, passage picker, settings screens
+js/lesson.js          lesson units, exercise runner, scoring/retries
+tests/                node tests for the grading logic (node tests/challenges.test.js)
 ```
 
 ## Roadmap (later versions)
@@ -92,9 +104,24 @@ js/ui.js              screen rendering + challenge flow
 - v0.2: a visual "scan the Bible" browser instead of dropdowns, more
   translations, better speech-grading leniency (homophones, minor
   variants).
+- v0.3: speaking is always an option instead of filling in the blanks by typing (more mobile friendly for this type of thing)
 - v2.x: friends/contacts, shared challenges and leaderboards.
 
+## Roadmap now
+- v0.22: Have a way for the learner to listen to the verse (voice needs to be a more natural speech reader--not a computer sounding one).  This is for when a verse(s) is first displayed (but is optional if the learner wants to listen to the verse).  There needs to be way more ways to practice.  Try first letters taken out, going in small bits (parts of 1st verse; then another part, etc.). The other methods are good, but don't have so many blanks words at first.  Build this up over a few trials. There should be at least 7-10 ways to do each verse in varying forms of difficulty.  Typing the verse is one thing, but saying it is better, so emphasize that.  If a person needs a hint, especially when they are at the write the (entire) verse or say the verse, this should give the first couple of words to get people on the right track.  Allow for try again buttons, but each time reduce the points that are awarded (1st time backwards, is 80% of the points, second is 60% points, 3rd is 30% points).  But if a person wants to use coins to pay for full points, they can do that too.  So if they go back and pay 40 coins, then it is 100% points, 20 coins it is 60% points, etc.  Allow a person to skip any of the lessons, such as speaking (because they might be in a place where they cannot speak).  Always provide a skip button, but do not award any points for skipping.
+
 ## Changelog
+- v0.22: Much more practice per verse. Passages are split into small
+  lessons of 10+ exercises each, from easy to hard (word tiles,
+  word-bank blanks, pick the right wording, what comes next, build it
+  up in small bits, first-letter clues, full recall), plus a review
+  lesson. Speaking is the main way to answer, with typing as a toggle.
+  Word-by-word grading no longer marks everything after one missed
+  word as wrong, and it allows for sound-alike words and small typos.
+  Listen button using the most natural browser voice, with voice and
+  speed settings. Hints, Skip on every exercise, retries at 80/60/30%
+  points, paid retries for full points (20/40/60 coins), points (XP)
+  and a lesson summary screen.
 - v0.21: Renamed to **Verses**. Replaced the dropdown setup with a
   book → chapter → full-chapter view where verses are selected with
   checkboxes / highlighting (click, drag, Shift-click, Select all).

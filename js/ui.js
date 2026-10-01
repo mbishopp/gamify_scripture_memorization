@@ -40,8 +40,14 @@ const UI = (() => {
     return el("div", { class: "app-header" }, [
       el("button", { class: "brand", onclick: () => renderHome() }, "📖 Verses"),
       el("div", { class: "stats" }, [
-        el("span", { class: "stat coins" }, fmtCoins(state.coins)),
-        el("span", { class: "stat streak" }, `🔥 ${state.streak.count}`)
+        el("span", { class: "stat xp", title: "Points" }, `⚡ ${state.xp || 0}`),
+        el("span", { class: "stat coins", title: "Coins" }, fmtCoins(state.coins)),
+        el("span", { class: "stat streak", title: "Day streak" }, `🔥 ${state.streak.count}`),
+        el(
+          "button",
+          { class: "stat stat-btn", title: "Settings", "aria-label": "Settings", onclick: () => renderSettings() },
+          "⚙️"
+        )
       ])
     ]);
   }
@@ -478,334 +484,95 @@ const UI = (() => {
   }
 
   // -------------------------------------------------------- lesson screen
-  async function openLesson(lessonId) {
-    const lesson = Game.getState().lessons[lessonId];
-    if (!lesson) return renderHome();
-
-    if (lesson.kind === "book") {
-      renderBookChapterPicker(lessonId, lesson);
-      return;
-    }
-
-    const container = root();
-    clear(container);
-    container.appendChild(el("div", { class: "screen" }, [renderHeader(), el("p", {}, "Loading passage…")]));
-
-    try {
-      let data;
-      if (lesson.kind === "verses") {
-        // v0.21 lessons: fetch the whole chapter (cached) and keep the chosen verses
-        const book = getBookById(lesson.bookId);
-        const chapter = await BibleAPI.fetchChapter(book.name, lesson.chapter, lesson.translationId);
-        const wanted = new Set(lesson.verses);
-        const verses = chapter.verses.filter((v) => wanted.has(v.verse));
-        data = { ...chapter, verses, fullText: verses.map((v) => v.text).join(" ") };
-      } else {
-        data = await BibleAPI.fetchPassage(lesson.reference, lesson.translationId);
-      }
-      runLessonSequence(lessonId, lesson.label, data, (finalAccuracy) => {
-        Game.setLessonProgress(lessonId, Math.round(finalAccuracy * 100));
-        renderHome();
-      });
-    } catch (err) {
-      clear(container);
-      container.appendChild(
-        el("div", { class: "screen" }, [
-          renderHeader(),
-          el("p", {}, `Couldn't load this passage: ${err.message}`),
-          el("button", { class: "btn", onclick: () => renderHome() }, "Back")
-        ])
-      );
-    }
+  // v0.22: the lesson flow lives in js/lesson.js.
+  function openLesson(lessonId) {
+    Lesson.open(lessonId);
   }
 
-  function renderBookChapterPicker(lessonId, lesson) {
+  // ------------------------------------------------------------- settings
+  function renderSettings(onBack = renderHome) {
     const container = root();
     clear(container);
-    const book = getBookById(lesson.bookId);
-    const nodes = [];
-    for (let c = 1; c <= book.chapters; c++) {
-      const prog = (lesson.chapterProgress || {})[c] || 0;
-      nodes.push(
-        el(
-          "button",
-          {
-            class: `chapter-chip ${prog >= 100 ? "complete" : ""}`,
-            onclick: () => openBookChapter(lessonId, c)
-          },
-          [el("div", {}, `${c}`), el("div", { class: "chip-progress" }, `${prog}%`)]
-        )
+    const s = Game.getSettings();
+
+    const voiceSelect = el("select", { class: "translation-select", "aria-label": "Voice" });
+    function fillVoices() {
+      clear(voiceSelect);
+      const list = Speech.listVoices();
+      voiceSelect.appendChild(
+        el("option", { value: "" }, list.length ? `Automatic — best available (${list[0].name})` : "Automatic")
       );
+      list.forEach((v, i) => {
+        const opt = el("option", { value: v.name }, `${i < 3 ? "★ " : ""}${v.name} (${v.lang})`);
+        if (v.name === Game.getSettings().voiceName) opt.selected = true;
+        voiceSelect.appendChild(opt);
+      });
     }
+    fillVoices();
+    const unsub = Speech.onVoicesChanged(fillVoices);
+    voiceSelect.addEventListener("change", () => Game.updateSettings({ voiceName: voiceSelect.value }));
+
+    const rateLabel = el("span", { class: "range-value" }, `${s.voiceRate.toFixed(2)}×`);
+    const rate = el("input", { type: "range", min: "0.6", max: "1.3", step: "0.05", value: String(s.voiceRate) });
+    rate.addEventListener("input", () => {
+      Game.updateSettings({ voiceRate: parseFloat(rate.value) });
+      rateLabel.textContent = `${parseFloat(rate.value).toFixed(2)}×`;
+    });
+
+    const toggle = (key, label, sub) => {
+      const box = el("input", { type: "checkbox" });
+      box.checked = !!Game.getSettings()[key];
+      box.addEventListener("change", () => Game.updateSettings({ [key]: box.checked }));
+      return el("label", { class: "toggle-row" }, [
+        box,
+        el("span", {}, [el("strong", {}, label), el("small", {}, sub)])
+      ]);
+    };
+
+    const back = () => {
+      unsub();
+      Speech.stop();
+      onBack();
+    };
+
     container.appendChild(
-      el("div", { class: "screen" }, [
+      el("div", { class: "screen screen-settings" }, [
         renderHeader(),
-        el("h2", {}, book.name),
-        el("div", { class: "chapter-grid" }, nodes),
-        el("button", { class: "btn btn-link", onclick: () => renderHome() }, "Back to path")
+        crumbs([{ text: "My path", onclick: back }, { text: "Settings" }]),
+        el("h2", {}, "Settings"),
+        el("section", { class: "settings-card" }, [
+          el("h3", {}, "🔊 Listening voice"),
+          Speech.canSpeak()
+            ? el("div", {}, [
+                voiceSelect,
+                el("div", { class: "range-row" }, [el("span", {}, "Speed"), rate, rateLabel]),
+                el(
+                  "button",
+                  {
+                    class: "btn btn-secondary",
+                    onclick: () => Speech.speak("The Lord is my shepherd; I shall not want.")
+                  },
+                  "▶ Test voice"
+                ),
+                el(
+                  "p",
+                  { class: "hint small" },
+                  "Tip: Microsoft Edge has the most natural free voices (look for “Natural”). On iPhone or Mac, download an “Enhanced” or “Premium” voice in Settings › Accessibility › Spoken Content, and it will show up here."
+                )
+              ])
+            : el("p", { class: "warning" }, "This browser can't read text aloud.")
+        ]),
+        el("section", { class: "settings-card" }, [
+          el("h3", {}, "🎙️ Practice"),
+          toggle("speakFirst", "Answer by speaking", "Saying a verse out loud helps it stick. You can always switch to typing."),
+          toggle("autoListen", "Read verses aloud automatically", "Plays the verse when it's first shown in a lesson.")
+        ]),
+        el("button", { class: "btn btn-primary btn-block", onclick: back }, "Done")
       ])
     );
   }
 
-  async function openBookChapter(lessonId, chapterNum) {
-    const lesson = Game.getState().lessons[lessonId];
-    const book = getBookById(lesson.bookId);
-    const container = root();
-    clear(container);
-    container.appendChild(el("div", { class: "screen" }, [renderHeader(), el("p", {}, "Loading chapter…")]));
-    try {
-      const data = await BibleAPI.fetchChapter(book.name, chapterNum, lesson.translationId);
-      runLessonSequence(lessonId, `${book.name} ${chapterNum}`, data, (finalAccuracy) => {
-        const cp = { ...(lesson.chapterProgress || {}) };
-        cp[chapterNum] = Math.max(cp[chapterNum] || 0, Math.round(finalAccuracy * 100));
-        const avg = Math.round(
-          Object.values(cp).reduce((a, b) => a + b, 0) / book.chapters
-        );
-        Game.upsertLesson(lessonId, { chapterProgress: cp, progress: avg });
-        renderBookChapterPicker(lessonId, Game.getState().lessons[lessonId]);
-      });
-    } catch (err) {
-      clear(container);
-      container.appendChild(
-        el("div", { class: "screen" }, [
-          renderHeader(),
-          el("p", {}, `Couldn't load this chapter: ${err.message}`),
-          el("button", { class: "btn", onclick: () => renderBookChapterPicker(lessonId, lesson) }, "Back")
-        ])
-      );
-    }
-  }
-
-  // ------------------------------------------------- challenge sequencing
-  // Splits long passages into rounds of up to `versesPerRound` verses so a
-  // whole chapter isn't one overwhelming block.
-  function chunkVerses(verses, versesPerRound = 4) {
-    const rounds = [];
-    for (let i = 0; i < verses.length; i += versesPerRound) {
-      rounds.push(verses.slice(i, i + versesPerRound));
-    }
-    return rounds.length ? rounds : [verses];
-  }
-
-  function runLessonSequence(lessonId, label, passageData, onComplete) {
-    const rounds = chunkVerses(passageData.verses);
-    const challengeTypes = ["read", "fillblank", "typed", "spoken"];
-    const plan = [];
-    rounds.forEach((verseGroup) => {
-      const text = verseGroup.map((v) => v.text).join(" ");
-      challengeTypes.forEach((type) => plan.push({ type, text }));
-    });
-
-    let step = 0;
-    let coinsEarned = 0;
-    let accuracySum = 0;
-    let accuracyCount = 0;
-
-    function next() {
-      if (step >= plan.length) {
-        return showSummary();
-      }
-      const challenge = plan[step];
-      step++;
-      renderChallenge(challenge, label, (accuracy, coins) => {
-        coinsEarned += coins;
-        if (accuracy !== null) {
-          accuracySum += accuracy;
-          accuracyCount++;
-        }
-        Game.addCoins(coins);
-        next();
-      });
-    }
-
-    function showSummary() {
-      Game.bumpStreak();
-      const finalAccuracy = accuracyCount ? accuracySum / accuracyCount : 1;
-      const container = root();
-      clear(container);
-      container.appendChild(
-        el("div", { class: "screen screen-summary" }, [
-          renderHeader(),
-          el("h2", {}, "Lesson complete! 🎉"),
-          el("p", {}, `${label}`),
-          el("p", { class: "summary-stat" }, `Coins earned: ${fmtCoins(coinsEarned)}`),
-          el("p", { class: "summary-stat" }, `Accuracy: ${Math.round(finalAccuracy * 100)}%`),
-          el("button", { class: "btn btn-primary", onclick: () => onComplete(finalAccuracy) }, "Continue")
-        ])
-      );
-    }
-
-    next();
-  }
-
-  function progressDots(step, total) {
-    const dots = [];
-    for (let i = 0; i < total; i++) {
-      dots.push(el("span", { class: `dot ${i < step ? "dot-done" : ""}` }));
-    }
-    return el("div", { class: "dots" }, dots);
-  }
-
-  function renderChallenge(challenge, label, onDone) {
-    const container = root();
-    clear(container);
-    const wrap = el("div", { class: "screen screen-challenge" }, [renderHeader(), el("h3", {}, label)]);
-    container.appendChild(wrap);
-
-    if (challenge.type === "read") return renderReadChallenge(wrap, challenge, onDone);
-    if (challenge.type === "fillblank") return renderFillBlankChallenge(wrap, challenge, onDone);
-    if (challenge.type === "typed") return renderTypedChallenge(wrap, challenge, onDone);
-    if (challenge.type === "spoken") return renderSpokenChallenge(wrap, challenge, onDone);
-  }
-
-  function renderReadChallenge(wrap, challenge, onDone) {
-    wrap.appendChild(el("p", { class: "challenge-instructions" }, "Read it a few times, then continue."));
-    wrap.appendChild(el("blockquote", { class: "verse-text" }, challenge.text));
-    wrap.appendChild(
-      el("button", { class: "btn btn-primary", onclick: () => onDone(null, 2) }, "I've got it")
-    );
-  }
-
-  function renderFillBlankChallenge(wrap, challenge, onDone) {
-    const { displayTokens, answerKey } = Challenges.makeFillBlank(challenge.text);
-    wrap.appendChild(el("p", { class: "challenge-instructions" }, "Fill in the missing words."));
-
-    const inputs = {};
-    const line = el("div", { class: "fillblank-line" });
-    displayTokens.forEach((tok) => {
-      if (tok.blank) {
-        const input = el("input", { class: "blank-input", type: "text", size: "8" });
-        inputs[tok.index] = input;
-        line.appendChild(input);
-      } else {
-        line.appendChild(document.createTextNode(tok.text + " "));
-      }
-    });
-    wrap.appendChild(line);
-
-    const feedback = el("div", { class: "feedback" });
-    wrap.appendChild(feedback);
-
-    wrap.appendChild(
-      el(
-        "button",
-        {
-          class: "btn btn-primary",
-          onclick: () => {
-            const userAnswers = {};
-            Object.entries(inputs).forEach(([idx, input]) => {
-              userAnswers[idx] = input.value;
-            });
-            const result = Challenges.gradeFillBlank(answerKey, userAnswers);
-            Object.entries(inputs).forEach(([idx, input]) => {
-              input.classList.add(result.results[idx] ? "correct" : "incorrect");
-              input.disabled = true;
-            });
-            feedback.textContent = `${result.correct}/${result.total} correct`;
-            const coins = Challenges.coinsForAccuracy(result.accuracy, 8);
-            setTimeout(() => onDone(result.accuracy, coins), 900);
-          }
-        },
-        "Check"
-      )
-    );
-  }
-
-  function renderTypedChallenge(wrap, challenge, onDone) {
-    wrap.appendChild(el("p", { class: "challenge-instructions" }, "Type this passage from memory."));
-    const textarea = el("textarea", { class: "typed-input", rows: "4" });
-    wrap.appendChild(textarea);
-    const feedback = el("div", { class: "feedback" });
-    wrap.appendChild(feedback);
-
-    wrap.appendChild(
-      el(
-        "button",
-        {
-          class: "btn btn-primary",
-          onclick: () => {
-            const result = Challenges.gradeTyped(challenge.text, textarea.value);
-            feedback.innerHTML = "";
-            feedback.appendChild(renderDiff(result.diff, challenge.text));
-            feedback.appendChild(
-              el("p", { class: "accuracy-line" }, `Accuracy: ${Math.round(result.accuracy * 100)}%`)
-            );
-            textarea.disabled = true;
-            const coins = Challenges.coinsForAccuracy(result.accuracy, 15);
-            const btn = wrap.querySelector(".btn-primary");
-            btn.textContent = "Continue";
-            btn.onclick = () => onDone(result.accuracy, coins);
-          }
-        },
-        "Check"
-      )
-    );
-  }
-
-  function renderDiff(diff, referenceText) {
-    const refWords = Challenges.tokenize(referenceText);
-    const spanWrap = el("div", { class: "diff-line" });
-    diff.forEach((d, i) => {
-      const word = refWords[i] ?? d.given ?? "";
-      spanWrap.appendChild(
-        el("span", { class: `diff-word ${d.correct ? "diff-correct" : "diff-wrong"}` }, word + " ")
-      );
-    });
-    return spanWrap;
-  }
-
-  function renderSpokenChallenge(wrap, challenge, onDone) {
-    wrap.appendChild(el("p", { class: "challenge-instructions" }, "Say this passage out loud."));
-    wrap.appendChild(el("blockquote", { class: "verse-text faint" }, challenge.text));
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const feedback = el("div", { class: "feedback" });
-
-    if (!SpeechRecognition) {
-      wrap.appendChild(
-        el("p", { class: "warning" }, "Speech recognition isn't supported in this browser — skipping to text entry.")
-      );
-      return renderTypedChallenge(wrap, challenge, onDone);
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-
-    const recordBtn = el("button", { class: "btn btn-primary" }, "🎙️ Start speaking");
-    wrap.appendChild(recordBtn);
-    wrap.appendChild(feedback);
-
-    recordBtn.addEventListener("click", () => {
-      recordBtn.disabled = true;
-      recordBtn.textContent = "Listening…";
-      recognition.start();
-    });
-
-    recognition.addEventListener("result", (event) => {
-      const transcript = event.results[0][0].transcript;
-      const result = Challenges.gradeSpoken(challenge.text, transcript);
-      feedback.innerHTML = "";
-      feedback.appendChild(el("p", {}, `Heard: "${transcript}"`));
-      feedback.appendChild(renderDiff(result.diff, challenge.text));
-      feedback.appendChild(
-        el("p", { class: "accuracy-line" }, `Accuracy: ${Math.round(result.accuracy * 100)}%`)
-      );
-      const coins = Challenges.coinsForAccuracy(result.accuracy, 15);
-      recordBtn.textContent = "Continue";
-      recordBtn.disabled = false;
-      recordBtn.onclick = () => onDone(result.accuracy, coins);
-    });
-
-    recognition.addEventListener("error", (event) => {
-      feedback.textContent = `Mic error (${event.error}). You can try again or type it instead.`;
-      recordBtn.disabled = false;
-      recordBtn.textContent = "🎙️ Try again";
-    });
-  }
-
-  return { renderHome, renderSetup, openLesson };
+  return { renderHome, renderSetup, renderSettings, openLesson, el, clear, root, renderHeader, fmtCoins };
 })();
 
 window.UI = UI;
