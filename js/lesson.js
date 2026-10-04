@@ -1,4 +1,4 @@
-/* Lesson flow (v0.22).
+/* Lesson flow (v0.22, memory-science pass in v0.24).
 
    A passage is split into small "units" (usually one verse; very short
    verses are merged). Each unit is a mini-lesson of 10+ exercises that
@@ -10,7 +10,16 @@
      - Try again: 1st retry earns 80% of the points, 2nd 60%, 3rd+ 30%
      - Try again at full points by paying coins (20 / 40 / 60)
      - Skip (always available, earns nothing)
-     - Hints on the recall exercises (reveal the first couple of words) */
+     - Hints on the recall exercises (reveal the first couple of words)
+
+   v0.24 adds the pieces that make memory last:
+     - Spaced review: finishing a unit schedules it for tomorrow, then
+       3 / 7 / 14 / 30 ... days. startDailyReview() quizzes whatever is due,
+       mixing verses from different passages (interleaving), retrieval first
+       (cold recall from just the address), scaffolding only if it fails.
+     - Tricky words: words missed earlier in a unit are drilled again
+       right before the final recall.
+     - Reference practice, "think about it" step, chunked display. */
 
 const Lesson = (() => {
   const { el, clear, root, renderHeader, fmtCoins } = UI;
@@ -87,10 +96,12 @@ const Lesson = (() => {
         verses = (await BibleAPI.fetchPassage(lesson.reference, lesson.translationId)).verses;
       }
       if (!verses.length) throw new Error("no verses found");
-      const rounds = buildRounds(verses);
+      const refBase = lesson.kind === "verses" ? `${getBookById(lesson.bookId).name} ${lesson.chapter}` : null;
+      const rounds = buildRounds(verses, refBase);
       renderUnits({
         lessonId,
         title: lesson.label,
+        translationId: lesson.translationId,
         rounds,
         prefix: "",
         back: UI.renderHome,
@@ -135,11 +146,12 @@ const Lesson = (() => {
     screenMessage("Loading chapter…");
     try {
       const data = await BibleAPI.fetchChapter(book.name, chapterNum, lesson.translationId);
-      const rounds = buildRounds(data.verses);
+      const rounds = buildRounds(data.verses, `${book.name} ${chapterNum}`);
       const prefix = `c${chapterNum}:`;
       renderUnits({
         lessonId,
         title: `${book.name} ${chapterNum}`,
+        translationId: lesson.translationId,
         rounds,
         prefix,
         back: () => renderBookChapters(lessonId),
@@ -160,7 +172,8 @@ const Lesson = (() => {
   // ----------------------------------------------------------- units
   // Group verses into small units: consecutive short verses are merged
   // (up to 3 verses / ~45 words); everything else is one verse per unit.
-  function buildRounds(verses) {
+  // `refBase` ("John 3") lets every unit know its address ("John 3:16").
+  function buildRounds(verses, refBase = null) {
     const groups = [];
     let cur = [];
     let words = 0;
@@ -184,6 +197,7 @@ const Lesson = (() => {
       return {
         key: a === b ? `v${a}` : `v${a}-${b}`,
         label: a === b ? `Verse ${a}` : `Verses ${a}–${b}`,
+        ref: refBase ? `${refBase}:${a === b ? a : `${a}-${b}`}` : null,
         verses: g,
         text: g.map((v) => v.text).join(" ")
       };
@@ -193,6 +207,7 @@ const Lesson = (() => {
         key: "review",
         label: "Review all",
         review: true,
+        ref: refBase ? `${refBase}:${UI.formatVerseList(verses.map((v) => v.verse))}` : null,
         verses,
         text: verses.map((v) => v.text).join(" ")
       });
@@ -264,8 +279,15 @@ const Lesson = (() => {
   }
 
   function startRound(opts, round, after) {
+    const title = opts.rounds.length > 1 ? `${opts.title} · ${round.label}` : opts.title;
+    const unitId = `${opts.lessonId}|${opts.prefix}${round.key}`;
     runRound(round, {
-      title: opts.rounds.length > 1 ? `${opts.title} · ${round.label}` : opts.title,
+      title,
+      unitId,
+      lessonId: opts.lessonId,
+      translationId: opts.translationId,
+      note: (Game.getReview(unitId) || {}).note || "",
+      thinkIdx: opts.rounds.indexOf(round),
       onQuit: after,
       onFinish: (pct) => {
         Game.setUnitProgress(opts.lessonId, opts.prefix + round.key, pct);
@@ -278,13 +300,16 @@ const Lesson = (() => {
   // ----------------------------------------------------------- a round
   function runRound(round, rctx) {
     const exercises = round.review
-      ? Challenges.buildReviewLadder(round.verses.map((v) => v.text))
-      : Challenges.buildLadder(round.text);
+      ? Challenges.buildReviewLadder(round.verses.map((v) => v.text), round.ref)
+      : Challenges.buildLadder(round.text, { ref: round.ref, think: rctx.thinkIdx || 0 });
     const session = {
       preferType: !Game.getSettings().speakFirst || !Speech.canListen(),
       autoPlayed: false
     };
     const tally = { xp: 0, max: 0, coins: 0, spent: 0, skipped: 0 };
+    const misses = new Set(); // words tripped over in this unit
+    const info = { recall: null, note: "" };
+    let weakAdded = false;
     let idx = 0;
 
     function quit() {
@@ -296,13 +321,25 @@ const Lesson = (() => {
 
     function next() {
       if (idx >= exercises.length) return summary();
+      // Adaptive step: drill the exact words missed so far, once, right
+      // before the final recall.
+      if (exercises[idx].final && misses.size && !weakAdded) {
+        weakAdded = true;
+        const text = exercises[idx].text;
+        exercises.splice(idx, 0, { type: "blanks", text, ratio: 0.2, force: [...misses], bank: false, weak: true, base: 15 });
+      }
       const ex = exercises[idx];
-      runExercise(ex, { title: rctx.title, idx, total: exercises.length, session, tally, quit }, (res) => {
+      const ctx = { title: rctx.title, idx, total: exercises.length, session, tally, quit, misses, note: rctx.note };
+      runExercise(ex, ctx, (res) => {
         if (ex.base) {
           tally.max += ex.base;
           tally.xp += res.xp || 0;
           tally.coins += res.coins || 0;
           if (res.skipped) tally.skipped++;
+        }
+        if (ex.type === "think" && res.note) info.note = res.note;
+        if (ex.final && ex.type === "recall" && !res.skipped && res.firstAccuracy !== null) {
+          info.recall = { accuracy: res.firstAccuracy, hinted: res.hinted };
         }
         idx++;
         next();
@@ -324,6 +361,16 @@ const Lesson = (() => {
           : pct >= 60
           ? "Run it once more to lock it in."
           : "Try it again — it gets easier every time.";
+      if (info.recall && !round.review) {
+        // schedule now (not on "Continue") so the card below shows the real date
+        Game.registerUnit(
+          rctx.unitId,
+          { lessonId: rctx.lessonId, label: round.ref || rctx.title, ref: round.ref, text: round.text, translationId: rctx.translationId, ...(info.note ? { note: info.note } : {}) },
+          info.recall.accuracy,
+          info.recall.hinted
+        );
+      }
+      const scheduled = info.recall && !round.review ? Game.getReview(rctx.unitId) : null;
       const c = root();
       clear(c);
       c.appendChild(
@@ -339,6 +386,7 @@ const Lesson = (() => {
             el("div", { class: "summary-card score" }, [el("small", {}, "Score"), el("strong", {}, `🎯 ${pct}%`)])
           ]),
           el("p", { class: "hint center" }, sub + (tally.skipped ? ` (${tally.skipped} skipped)` : "")),
+          scheduled ? nextReviewCard(scheduled) : null,
           el("button", { class: "btn btn-primary btn-block", onclick: () => rctx.onFinish(pct) }, "Continue")
         ])
       );
@@ -351,6 +399,8 @@ const Lesson = (() => {
   function runExercise(ex, ctx, done) {
     let attempt = 0;
     let paid = false;
+    let firstAcc = null; // accuracy on the FIRST try: the honest memory signal
+    let hinted = false;
 
     function render() {
       Speech.stop();
@@ -404,7 +454,7 @@ const Lesson = (() => {
           onclick: () => {
             stopAll();
             Speech.stop();
-            done({ xp: 0, coins: 0, skipped: true });
+            done({ xp: 0, coins: 0, skipped: true, firstAccuracy: null, hinted });
           }
         },
         "Skip"
@@ -421,6 +471,11 @@ const Lesson = (() => {
         session: ctx.session,
         persist: ex._persist || (ex._persist = {}),
         attempt,
+        ctx,
+        misses: ctx.misses || new Set(),
+        markHinted() {
+          hinted = true;
+        },
         cleanup,
         stopAll,
         grade(accuracy, detailNode, opts = {}) {
@@ -428,10 +483,10 @@ const Lesson = (() => {
           graded = true;
           showResult(accuracy, detailNode, opts);
         },
-        finish() {
+        finish(extra = {}) {
           stopAll();
           Speech.stop();
-          done({ xp: 0, coins: 0 });
+          done({ xp: 0, coins: 0, firstAccuracy: null, hinted, ...extra });
         }
       };
 
@@ -440,6 +495,7 @@ const Lesson = (() => {
       function showResult(accuracy, detailNode, { correctText } = {}) {
         stopAll();
         body.classList.add("locked");
+        if (attempt === 0 && firstAcc === null) firstAcc = accuracy;
         const xp = Challenges.pointsFor(ex.base, accuracy, mult);
         const perfect = accuracy >= 0.999;
         const tone = perfect ? "good" : accuracy >= 0.7 ? "ok" : "bad";
@@ -501,7 +557,7 @@ const Lesson = (() => {
               Game.addXp(xp);
               const coins = Challenges.coinsForPoints(xp);
               Game.addCoins(coins);
-              done({ xp, coins });
+              done({ xp, coins, accuracy, firstAccuracy: firstAcc, hinted });
             }
           },
           "Continue"
@@ -533,9 +589,16 @@ const Lesson = (() => {
   const RENDERERS = {
     read(api) {
       const { ex, body, primary } = api;
+      // Shown in natural phrases (chunking), with its address, and read ALOUD
+      // (the production effect: words you say are remembered better).
       body.append(
-        instr("Read it — or listen — a few times until it feels familiar."),
-        el("blockquote", { class: "verse-text" }, ex.text),
+        instr("Read it out loud — or listen — a few times until it feels familiar."),
+        ex.ref ? el("div", { class: "ref-tag" }, `📍 ${ex.ref}`) : null,
+        el(
+          "blockquote",
+          { class: "verse-text chunked" },
+          ex.phrases && ex.phrases.length > 1 ? ex.phrases.map((p) => el("span", { class: "chunk" }, p)) : ex.text
+        ),
         listenButton(ex.text) || ""
       );
       if (Game.getSettings().autoListen && !api.session.autoPlayed && Speech.canSpeak()) {
@@ -545,6 +608,27 @@ const Lesson = (() => {
       primary.textContent = "I've got it";
       primary.disabled = false;
       primary.onclick = () => api.finish();
+    },
+
+    // Ungraded elaboration step: linking words to meaning/imagery/self.
+    think(api) {
+      const { ex, body, primary } = api;
+      const ta = el("textarea", {
+        class: "typed-input",
+        rows: "3",
+        placeholder: "Optional — jot it in your own words. You'll see it again at review time.",
+        spellcheck: "true"
+      });
+      ta.value = (api.ctx && api.ctx.note) || "";
+      body.append(
+        instr("Make it meaningful"),
+        el("blockquote", { class: "verse-text prompt" }, ex.text),
+        el("p", { class: "think-prompt" }, `💭 ${ex.prompt}`),
+        ta
+      );
+      primary.textContent = "Continue";
+      primary.disabled = false;
+      primary.onclick = () => api.finish({ note: ta.value.trim() });
     },
 
     tiles(api) {
@@ -605,9 +689,20 @@ const Lesson = (() => {
     },
 
     blanks(api) {
-      const data = api.persist.blanks || (api.persist.blanks = Challenges.makeBlanks(api.ex.text, api.ex.ratio));
+      const data =
+        api.persist.blanks || (api.persist.blanks = Challenges.makeBlanks(api.ex.text, api.ex.ratio, api.ex.force));
       if (api.ex.bank) blanksWithBank(api, data);
       else blanksTyped(api, data);
+    },
+
+    refpick(api) {
+      const { options } = Challenges.makeRefOptions(api.ex.ref);
+      choiceExercise(
+        api,
+        [instr("Where is this verse found?"), el("blockquote", { class: "verse-text" }, api.ex.text)],
+        options,
+        `${api.ex.ref}. ${api.ex.text}`
+      );
     },
 
     pick(api) {
@@ -633,6 +728,13 @@ const Lesson = (() => {
     letters: recallExercise,
     recall: recallExercise
   };
+
+  // Remember which words were missed so they can be drilled again.
+  function noteBlankMisses(api, data, r) {
+    data.blanks.forEach((i) => {
+      if (!r.results[i]) api.misses.add(Challenges.normalizeWord(data.tokens[i].core));
+    });
+  }
 
   // Word-bank blanks (easy): tap words to fill slots.
   function blanksWithBank(api, data) {
@@ -698,6 +800,7 @@ const Lesson = (() => {
       const answers = {};
       data.blanks.forEach((i) => (answers[i] = (itemById.get(filled[i]) || {}).text || ""));
       const r = Challenges.gradeBlanks(data, answers);
+      noteBlankMisses(api, data, r);
       line.querySelectorAll(".slot").forEach((s) => s.classList.add(r.results[s.dataset.index] ? "correct" : "incorrect"));
       api.grade(r.accuracy, r.accuracy < 1 ? correctAnswer(ex.text) : null, { correctText: ex.text });
     };
@@ -741,7 +844,11 @@ const Lesson = (() => {
     const speakFirst = canMic && !api.session.preferType;
     body.append(
       instr(
-        speakFirst
+        ex.weak
+          ? speakFirst
+            ? "Your tricky words — say the whole verse, or type just these."
+            : `Your tricky words — type them${canMic ? " or say the whole verse." : "."}`
+          : speakFirst
           ? "Say the whole verse out loud — or type the missing words."
           : `Type the missing words${canMic ? " — or say the whole verse." : "."}`
       )
@@ -760,6 +867,7 @@ const Lesson = (() => {
     }
 
     function mark(r, transcript) {
+      noteBlankMisses(api, data, r);
       data.blanks.forEach((i) => {
         const input = inputs[i];
         input.disabled = true;
@@ -815,6 +923,7 @@ const Lesson = (() => {
   function recallExercise(api) {
     const { ex, body } = api;
     const words = Challenges.tokenize(ex.text).length;
+    const refTag = ex.ref ? el("div", { class: "ref-tag" }, `📍 ${ex.ref}`) : null;
     if (ex.type === "bits") {
       const meter = el(
         "div",
@@ -833,35 +942,49 @@ const Lesson = (() => {
     } else if (ex.type === "letters") {
       body.append(
         instr("Say it using the first letters as clues."),
+        refTag,
         el("div", { class: "letters" }, Challenges.firstLetters(ex.text))
+      );
+    } else if (ex.cold) {
+      // Spaced review: only the address is shown. Pulling the verse out of
+      // memory with no cue is what makes the memory last.
+      body.append(
+        instr(ex.ref ? "Say the reference, then the verse — from memory." : "Say the verse from memory."),
+        refTag || el("div", { class: "ref-tag" }, "📖 Review"),
+        el("p", { class: "word-count" }, `${words} words`)
       );
     } else {
       body.append(
-        instr("Now the whole thing from memory!"),
+        instr(ex.ref ? "Now the whole thing from memory — start with the reference!" : "Now the whole thing from memory!"),
+        refTag,
         el("p", { class: "word-count" }, `${words} words`)
       );
     }
-    body.append(hintControl(ex.text));
+    body.append(hintControl(api, ex.text));
     recallInput(api, ex.text, (given, mode) => {
-      const r = Challenges.gradeRecall(ex.text, given);
+      const r = Challenges.gradeRecall(ex.text, given, ex.ref);
+      r.diff.forEach((d) => d.correct || api.misses.add(Challenges.normalizeWord(d.text)));
+      const note = ex.cold && api.ctx && api.ctx.note;
       api.grade(
         r.accuracy,
         el("div", {}, [
           mode === "speak" ? el("p", { class: "heard" }, `Heard: “${given}”`) : null,
           diffNode(r.diff),
-          el("p", { class: "accuracy-line" }, `${r.correct} of ${r.total} words`)
+          el("p", { class: "accuracy-line" }, `${r.correct} of ${r.total} words${r.refFound ? " · 📍 reference included" : ""}`),
+          note ? el("p", { class: "your-note" }, `📝 Your note: ${note}`) : null
         ]),
         { correctText: ex.text }
       );
     });
   }
 
-  function hintControl(text) {
+  function hintControl(api, text) {
     const words = Challenges.tokenize(text);
     let n = 0;
     const out = el("span", { class: "hint-text" });
     const btn = el("button", { class: "btn btn-ghost btn-hint", type: "button" }, "💡 Hint");
     btn.addEventListener("click", () => {
+      api.markHinted();
       n += 2;
       const shown = Challenges.hintWords(text, n);
       const more = Challenges.tokenize(shown).length < words.length;
@@ -959,7 +1082,138 @@ const Lesson = (() => {
     return el("div", { class: "mic-box" }, [btn, status, live]);
   }
 
-  return { open, buildRounds };
+  // ------------------------------------------------- spaced-review UI
+  const REVIEW_BATCH = 8; // a short daily session beats a long, tiring one
+
+  function nextReviewCard(entry) {
+    const when = Spacing.describeDue(entry.due, Game.todayStr());
+    const first = (entry.reps || 0) === 0;
+    return el("div", { class: "review-card" }, [
+      el("strong", {}, `🗓️ ${first ? "First review" : "Next review"}: ${when}`),
+      el(
+        "small",
+        {},
+        first
+          ? "Sleep locks new verses in. Come back for a quick recall — if you get it, the gaps stretch to days, then weeks."
+          : "Each time you remember it, the wait gets longer."
+      )
+    ]);
+  }
+
+  // Quiz whatever is due. Verses from every passage are mixed together
+  // (interleaving), and each one starts with a cold recall from just the
+  // address. A clean first-try pass pushes the next review further out; a
+  // miss gives a short scaffolded path back and brings it back tomorrow.
+  function startDailyReview(onExit = UI.renderHome) {
+    const dueAll = Game.dueReviews();
+    if (!dueAll.length) return onExit();
+    const items = Challenges.shuffle(dueAll.slice(0, REVIEW_BATCH));
+    const session = { preferType: !Game.getSettings().speakFirst || !Speech.canListen(), autoPlayed: false };
+    const tally = { xp: 0, max: 0, coins: 0, spent: 0, skipped: 0 };
+    const results = [];
+    let i = 0;
+
+    function quit() {
+      Speech.stop();
+      if (confirm("Stop this review? Verses you've already finished are rescheduled; the rest stay due.")) onExit();
+    }
+
+    function nextItem() {
+      if (i >= items.length) return summary();
+      const item = items[i];
+      const queue = Challenges.buildSpacedReview(item.text, item.ref);
+      const misses = new Set();
+      let k = 0;
+      let cold = null;
+
+      const finishItem = () => {
+        if (cold && !cold.skipped && cold.firstAccuracy !== null) {
+          const entry = Game.recordReview(item.id, cold.firstAccuracy, cold.hinted);
+          results.push({ item, entry, accuracy: cold.firstAccuracy, hinted: cold.hinted });
+        } else {
+          results.push({ item, entry: null, skipped: true });
+        }
+        i++;
+        nextItem();
+      };
+
+      const step = () => {
+        if (k >= queue.length) return finishItem();
+        const ex = queue[k];
+        const ctx = { title: `Review ${i + 1} of ${items.length}`, idx: i, total: items.length, session, tally, quit, misses, note: item.note };
+        runExercise(ex, ctx, (res) => {
+          if (ex.base) {
+            tally.max += ex.base;
+            tally.xp += res.xp || 0;
+            tally.coins += res.coins || 0;
+            if (res.skipped) tally.skipped++;
+          }
+          if (ex.cold) {
+            cold = res;
+            const clean = !res.skipped && res.firstAccuracy >= Spacing.GOOD && !res.hinted;
+            if (res.skipped || clean) queue.length = k + 1;
+            else queue.push(...Challenges.buildRemedial(item.text, item.ref));
+          }
+          k++;
+          step();
+        });
+      };
+      step();
+    }
+
+    function summary() {
+      Speech.stop();
+      Game.bumpStreak();
+      const bonus = Challenges.SCORING.roundBonusCoins;
+      Game.addCoins(bonus);
+      tally.coins += bonus;
+      const done = results.filter((r) => !r.skipped);
+      const solid = done.filter((r) => r.accuracy >= Spacing.GOOD && !r.hinted).length;
+      const remaining = Game.dueReviews().length;
+      const rows = results.map((r) => {
+        const icon = r.skipped ? "⏭️" : r.accuracy >= Spacing.GOOD && !r.hinted ? "✅" : r.accuracy >= Spacing.OK ? "🟡" : "🔁";
+        const when = r.skipped ? "still due" : `next ${Spacing.describeDue(r.entry.due, Game.todayStr())}`;
+        return el("li", { class: "review-row" }, [
+          el("span", { class: "review-icon" }, icon),
+          el("span", { class: "review-ref" }, r.item.label),
+          el("span", { class: "review-when" }, when)
+        ]);
+      });
+      const c = root();
+      clear(c);
+      c.appendChild(
+        el("div", { class: "screen screen-summary" }, [
+          renderHeader(),
+          el("div", { class: "summary-hero" }, [
+            el("h2", {}, solid === done.length && done.length ? "Locked in! 🧠" : "Review done 💪"),
+            el("p", { class: "hint" }, `${solid} of ${done.length} recalled cleanly`)
+          ]),
+          el("div", { class: "summary-cards" }, [
+            el("div", { class: "summary-card xp" }, [el("small", {}, "Points"), el("strong", {}, `⚡ ${tally.xp}`)]),
+            el("div", { class: "summary-card coins" }, [
+              el("small", {}, "Coins"),
+              el("strong", {}, `🪙 +${tally.coins}${tally.spent ? ` / −${tally.spent}` : ""}`)
+            ]),
+            el("div", { class: "summary-card score" }, [el("small", {}, "Recalled"), el("strong", {}, `🎯 ${solid}/${done.length}`)])
+          ]),
+          el("ul", { class: "review-list" }, rows),
+          el(
+            "p",
+            { class: "hint center" },
+            done.length - solid > 0
+              ? "Struggling to remember is not failing — that effort is exactly what strengthens memory. Missed verses come back tomorrow."
+              : "Each clean recall pushes the next review further away. That is how a verse becomes permanent."
+          ),
+          remaining ? el("p", { class: "hint center" }, `${remaining} more ${remaining === 1 ? "verse is" : "verses are"} due — do them in a short session later today.`) : null,
+          el("button", { class: "btn btn-primary btn-block", onclick: () => onExit() }, "Done")
+        ])
+      );
+    }
+
+    nextItem();
+  }
+
+  return { open, buildRounds, startDailyReview };
 })();
 
 window.Lesson = Lesson;

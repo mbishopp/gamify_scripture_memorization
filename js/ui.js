@@ -65,15 +65,44 @@ const UI = (() => {
     container.appendChild(
       el("div", { class: "screen screen-home" }, [
         renderHeader(),
+        reviewCard(),
         el("h2", { class: "path-heading" }, "Your path"),
         el("div", { class: "path" }, nodes),
         el(
           "button",
           { class: "btn btn-primary btn-add", onclick: () => renderSetup() },
           "+ Add a passage"
-        )
+        ),
+        el("button", { class: "btn btn-ghost btn-block science-link", onclick: () => renderScience() }, "🧠 How Verses helps you remember")
       ])
     );
+  }
+
+  // Spaced-review status: the most important thing on the home screen,
+  // because spreading practice over days is what makes verses last.
+  function reviewCard() {
+    const total = Game.reviewCount();
+    const due = Game.dueReviews().length;
+    if (!total) {
+      return el("section", { class: "review-banner idle" }, [
+        el("strong", {}, "🧠 Spaced review"),
+        el("small", {}, "Finish a verse and it is scheduled for review tomorrow, then days and weeks later. That is how it sticks for good.")
+      ]);
+    }
+    if (!due) {
+      const next = Game.nextDueDate();
+      return el("section", { class: "review-banner caught-up" }, [
+        el("strong", {}, "✅ All caught up"),
+        el("small", {}, `${total} verse${total === 1 ? "" : "s"} in your review plan · next review ${Spacing.describeDue(next, Game.todayStr())}`)
+      ]);
+    }
+    return el("section", { class: "review-banner due" }, [
+      el("div", {}, [
+        el("strong", {}, `🧠 Daily review · ${due} verse${due === 1 ? "" : "s"} due`),
+        el("small", {}, "Short and effective: say each verse from memory. The 5 minutes that matter most.")
+      ]),
+      el("button", { class: "btn btn-primary", onclick: () => Lesson.startDailyReview(renderHome) }, "Start review")
+    ]);
   }
 
   function renderPathNode(lesson, index) {
@@ -89,7 +118,10 @@ const UI = (() => {
         el("span", { class: "path-node-icon" }, progress >= 100 ? "⭐" : "📘")
       ),
       el("div", { class: "path-node-label" }, [
-        el("div", { class: "path-node-title" }, lesson.label),
+        el("div", { class: "path-node-title" }, [
+          lesson.label,
+          Game.dueCountForLesson(lesson.id) ? el("span", { class: "due-badge" }, `${Game.dueCountForLesson(lesson.id)} due`) : null
+        ]),
         el("div", { class: "path-node-meta" }, `${(lesson.translationId || "").toUpperCase()} · ${progress}%`),
         el("div", { class: "progress-bar" }, [
           el("div", { class: "progress-bar-fill", style: `width:${progress}%` })
@@ -567,12 +599,108 @@ const UI = (() => {
           toggle("speakFirst", "Answer by speaking", "Saying a verse out loud helps it stick. You can always switch to typing."),
           toggle("autoListen", "Read verses aloud automatically", "Plays the verse when it's first shown in a lesson.")
         ]),
+        el("button", { class: "btn btn-secondary btn-block", onclick: () => renderScience(() => renderSettings(onBack)) }, "🧠 How Verses helps you remember"),
         el("button", { class: "btn btn-primary btn-block", onclick: back }, "Done")
       ])
     );
   }
 
-  return { renderHome, renderSetup, renderSettings, openLesson, el, clear, root, renderHeader, fmtCoins };
+  // ------------------------------------------------------- how it works
+  const TECHNIQUES = [
+    {
+      icon: "🎯",
+      name: "Pull it out, don't just read it",
+      why: "Trying to recall something strengthens memory far more than re-reading it, even when you get it wrong (the testing effect).",
+      how: "Every exercise asks you to produce the words, and shrinking clues (blanks, first letters, then nothing) lead to full recall."
+    },
+    {
+      icon: "🗓️",
+      name: "Spread it over days",
+      why: "The same practice split across days beats one long session by a wide margin (the spacing effect). Cramming feels good and fades fast.",
+      how: "Finish a verse and it is scheduled for review tomorrow, then in 3, 7, 14, 30 days and beyond. A clean recall stretches the gap; a miss brings it back sooner."
+    },
+    {
+      icon: "🌙",
+      name: "Sleep on it",
+      why: "Sleep turns fresh memories into lasting ones. A verse learned in the evening and recalled the next morning is far more durable.",
+      how: "The first review is always the next day. Learning a verse right before bed, then reviewing it in the morning, is a great pattern."
+    },
+    {
+      icon: "🗣️",
+      name: "Say it out loud",
+      why: "Words you speak are remembered better than words you only read or type (the production effect).",
+      how: "Speaking is the default way to answer, and the read step asks you to say the verse aloud."
+    },
+    {
+      icon: "🧩",
+      name: "Chunk it",
+      why: "Short working memory copes by grouping. Phrases are easier to hold than a long string of words.",
+      how: "Verses show in natural phrases, and long ones are built up part by part (parts 1, then 1–2, then 1–3)."
+    },
+    {
+      icon: "💭",
+      name: "Make it meaningful",
+      why: "Thinking about what words mean, picturing them, or tying them to your life makes them stick far better than parroting (elaboration).",
+      how: "A short “make it meaningful” step prompts you to picture it or put it in your own words. Your note comes back at review time."
+    },
+    {
+      icon: "📍",
+      name: "Learn the address too",
+      why: "Knowing where a verse lives lets you find it, share it, and recall it on cue.",
+      how: "Each verse shows its reference, has a “where is this?” question, and recall exercises ask you to say the reference first."
+    },
+    {
+      icon: "🔀",
+      name: "Mix it up",
+      why: "Reviewing different things in a mixed order is harder, and builds more flexible, longer-lasting memory (interleaving).",
+      how: "Daily review mixes verses from all your passages in random order."
+    },
+    {
+      icon: "🎯",
+      name: "Fix the tricky spots",
+      why: "Most forgetting clusters on a few words. Targeted correction beats going over everything again.",
+      how: "Words you miss are collected and drilled together right before the final recall."
+    },
+    {
+      icon: "💪",
+      name: "Make it a little hard",
+      why: "Effortful recall that you sometimes miss builds stronger memory than easy recall (“desirable difficulty”). Peeking early robs you of that effect.",
+      how: "Hints show only the first couple of words, and a hint during review means the verse comes back sooner."
+    }
+  ];
+
+  function renderScience(onBack = renderHome) {
+    const container = root();
+    clear(container);
+    container.appendChild(
+      el("div", { class: "screen screen-science" }, [
+        renderHeader(),
+        crumbs([{ text: "Back", onclick: onBack }, { text: "How it works" }]),
+        el("h2", {}, "How Verses helps you remember"),
+        el("p", { class: "hint" }, "Everything in the app comes from what memory research shows works best."),
+        ...TECHNIQUES.map((t) =>
+          el("section", { class: "settings-card technique" }, [
+            el("h3", {}, `${t.icon} ${t.name}`),
+            el("p", { class: "why" }, t.why),
+            el("p", { class: "how" }, [el("strong", {}, "In Verses: "), t.how])
+          ])
+        ),
+        el("section", { class: "settings-card technique tips" }, [
+          el("h3", {}, "✨ Your best habits"),
+          el("ul", {}, [
+            el("li", {}, "A little every day beats a lot once a week. Aim for 10 minutes."),
+            el("li", {}, "Do your daily review first, then learn something new."),
+            el("li", {}, "Attach it to a habit you already have: coffee, commute, bedtime."),
+            el("li", {}, "Learn only a few new verses at a time, and let each settle for a night or two."),
+            el("li", {}, "Say your verses to a friend, or while walking. Use them in prayer, and teach one to someone.")
+          ])
+        ]),
+        el("button", { class: "btn btn-primary btn-block", onclick: onBack }, "Got it")
+      ])
+    );
+  }
+
+  return { formatVerseList, renderScience, renderHome, renderSetup, renderSettings, openLesson, el, clear, root, renderHeader, fmtCoins };
 })();
 
 window.UI = UI;
