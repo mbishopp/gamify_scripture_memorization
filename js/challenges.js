@@ -143,9 +143,61 @@ const Challenges = (() => {
     return refToGot;
   }
 
-  // Grade a typed or spoken recall of `refText`.
-  // Returns { accuracy, correct, total, diff: [{ text, correct }] }
-  function gradeRecall(refText, given) {
+  // ---------------------------------------------------------- references
+  // Learners who also say "John 3:16" before/after the verse shouldn't be
+  // penalised for it (knowing WHERE a verse lives is part of knowing it).
+  const TENS_WORDS = ["thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred"];
+  const REF_FILLER = ["chapter", "verse", "verses", "colon", "through", "dash"];
+
+  function isRefNumber(n) {
+    return /^\d+$/.test(n) || NUMBER_WORDS.includes(n) || TENS_WORDS.includes(n);
+  }
+
+  // Returns { text, found } — `text` has any spoken/typed reference removed
+  // from the start or end. `ref` is like "1 John 4:7-8".
+  function stripReference(given, ref) {
+    const out = { text: given || "", found: false };
+    if (!ref) return out;
+    const book = (String(ref).match(/^(.*?)\s+\d+:/) || [])[1];
+    if (!book) return out;
+    const bookNorm = tokenize(book).map(normalizeWord).filter(Boolean);
+    const raw = tokenize(String(given || "").replace(/(\d)[:.](\d)/g, "$1 $2"));
+    const norm = raw.map(normalizeWord);
+    const isTail = (w) => !!w && (isRefNumber(w) || REF_FILLER.includes(w));
+    const at = (i) => bookNorm.every((b, k) => wordsMatch(b, norm[i + k] || ""));
+
+    let start = 0;
+    let end = raw.length;
+    if (at(0)) {
+      start = bookNorm.length;
+      while (start < end && isTail(norm[start])) start++;
+      out.found = true;
+    }
+    // trailing reference: book words followed only by numbers/fillers
+    for (let i = start; i < end; i++) {
+      if (!at(i)) continue;
+      let j = i + bookNorm.length;
+      while (j < end && isTail(norm[j])) j++;
+      if (j === end && end - i <= bookNorm.length + 6) {
+        end = i;
+        out.found = true;
+      }
+      break;
+    }
+    out.text = raw.slice(start, end).join(" ");
+    return out;
+  }
+
+  // Grade a typed or spoken recall of `refText`. Pass `ref` ("John 3:16")
+  // to ignore a reference the learner said along with the verse.
+  // Returns { accuracy, correct, total, diff: [{ text, correct }], refFound }
+  function gradeRecall(refText, given, ref) {
+    let refFound = false;
+    if (ref) {
+      const stripped = stripReference(given, ref);
+      given = stripped.text;
+      refFound = stripped.found;
+    }
     const refRaw = tokenize(refText);
     const refIdx = [];
     const refNorm = [];
@@ -170,7 +222,7 @@ const Challenges = (() => {
     const extra = gotNorm.length - correct - Math.ceil(total * 0.25);
     if (extra > 0 && total) accuracy = Math.max(0, accuracy - (extra / total) * 0.5);
     const diff = refRaw.map((w, i) => ({ text: w, correct: !normalizeWord(w) || correctSet.has(i) }));
-    return { accuracy, correct, total, diff };
+    return { accuracy, correct, total, diff, refFound };
   }
 
   // Kept for backwards compatibility with v0.21 callers.
@@ -226,8 +278,21 @@ const Challenges = (() => {
 
   // ------------------------------------------------------------- blanks
   // Returns { tokens: [{ text } | { blank, index, lead, core, trail }], blanks: [index] }
-  function makeBlanks(text, ratio = 0.25) {
+  // `force` (optional): normalized words the learner has tripped over; if
+  // any appear in the text, blank exactly those (max 8) — targeted practice.
+  function makeBlanks(text, ratio = 0.25, force = null) {
     const words = tokenize(text);
+    if (force && force.length) {
+      const want = new Set(force);
+      const hits = words.map((_, i) => i).filter((i) => want.has(normalizeWord(words[i])) && normalizeWord(words[i]).length >= 2);
+      if (hits.length) {
+        const chosen = new Set(shuffle(hits).slice(0, 8));
+        const tokens = words.map((w, i) =>
+          chosen.has(i) ? { blank: true, index: i, ...splitPunct(w) } : { blank: false, text: w }
+        );
+        return { tokens, blanks: [...chosen].sort((a, b) => a - b) };
+      }
+    }
     let eligible = words.map((_, i) => i).filter((i) => normalizeWord(words[i]).length >= 3);
     if (!eligible.length) eligible = words.map((_, i) => i).filter((i) => normalizeWord(words[i]));
     const count = Math.min(eligible.length, Math.max(1, Math.round(eligible.length * ratio)));
@@ -445,6 +510,37 @@ const Challenges = (() => {
     return { prompt: phrases[i], isStart: i === 0, options: shuffle(options) };
   }
 
+  // ----------------------------------------------------- "where is it?"
+  // Plausible wrong addresses: nearby verse numbers and the next/previous
+  // chapter. Returns { options: [{ text, correct }] } or null.
+  function makeRefOptions(ref) {
+    const m = String(ref || "").match(/^(.*?)\s+(\d+):(.+)$/);
+    if (!m) return null;
+    const [, book, chap, verses] = m;
+    const shift = (d) => verses.replace(/\d+/g, (n) => String(Math.max(1, +n + d)));
+    const wrong = new Set();
+    for (const d of shuffle([1, 2, 3, -1, -2, -3, 4, 5])) {
+      const v = shift(d);
+      if (v !== verses && wrong.size < 1) wrong.add(`${book} ${chap}:${v}`);
+    }
+    const otherChap = +chap > 1 && Math.random() < 0.5 ? +chap - 1 : +chap + 1;
+    wrong.add(`${book} ${otherChap}:${verses}`);
+    const options = [ref, ...wrong].map((text) => ({ text, correct: text === ref }));
+    return { options: shuffle(options) };
+  }
+
+  // Short "think about it" prompts — elaborating on meaning (in your own
+  // words, with an image, with a personal link) makes a verse far stickier
+  // than rote repetition of the words alone.
+  const THINK_PROMPTS = [
+    "Picture it: what scene, image or feeling comes to mind?",
+    "Say it in your own words. What is this verse really telling you?",
+    "Who is speaking, and who is listening? Why does it matter?",
+    "Which single word or phrase stands out most to you — and why?",
+    "How could this verse change something you do or think today?",
+    "What does this verse tell you about God? About yourself?"
+  ];
+
   // -------------------------------------------------------- first letters
   // "For God so loved the world," -> "F G s l t w,"
   function firstLetters(text) {
@@ -464,14 +560,27 @@ const Challenges = (() => {
   // ------------------------------------------------------------- ladder
   // Exercises for one small chunk (usually a single verse), easy -> hard.
   // `base` is the points (XP) a perfect first try earns.
-  function buildLadder(text) {
+  //
+  // Memory-science notes on the shape of the ladder:
+  //  - chunking: the verse is shown split at natural phrases
+  //  - elaboration: a "think" step ties the words to meaning and imagery
+  //  - generation / testing effect: from the first exercise on, the learner
+  //    produces answers instead of re-reading, and the scaffolding is faded
+  //    (many blanks -> few -> first letters -> nothing)
+  //  - production effect: speaking aloud is the default way to answer
+  //  - the reference is learned with the verse, not as an afterthought
+  // `opts.ref` is the address ("John 3:16"), when known.
+  function buildLadder(text, opts = {}) {
+    const { ref = null, think = 0 } = opts;
     const phrases = splitPhrases(text);
     const segments = groupSegments(phrases, 3);
     const ex = [];
-    ex.push({ type: "read", text });
+    ex.push({ type: "read", text, ref, phrases });
+    ex.push({ type: "think", text, ref, prompt: THINK_PROMPTS[think % THINK_PROMPTS.length] });
     ex.push({ type: "tiles", text, base: 10 });
     ex.push({ type: "blanks", text, ratio: 0.15, bank: true, base: 10 });
     ex.push({ type: "pick", text, base: 10 });
+    if (ref && makeRefOptions(ref)) ex.push({ type: "refpick", text, ref, base: 10 });
     if (phrases.length >= 2) ex.push({ type: "next", text, phrases, base: 10 });
     ex.push({ type: "blanks", text, ratio: 0.35, bank: false, base: 15 });
     // build it up in small bits: part 1, then parts 1-2, ...
@@ -480,19 +589,36 @@ const Challenges = (() => {
     }
     ex.push({ type: "letters", text, base: 20 });
     ex.push({ type: "blanks", text, ratio: 0.65, bank: false, base: 20 });
-    ex.push({ type: "recall", text, base: 30 });
+    ex.push({ type: "recall", text, ref, final: true, base: 30 });
     return ex;
   }
 
   // A short review across several verses already learned one by one.
-  function buildReviewLadder(verseTexts) {
+  function buildReviewLadder(verseTexts, ref = null) {
     const text = verseTexts.join(" ");
     const ex = [];
     if (verseTexts.length >= 2) ex.push({ type: "next", text, phrases: verseTexts, base: 15 });
     ex.push({ type: "blanks", text, ratio: 0.4, bank: false, base: 20 });
     ex.push({ type: "letters", text, base: 25 });
-    ex.push({ type: "recall", text, base: 40 });
+    ex.push({ type: "recall", text, ref, final: true, base: 40 });
     return ex;
+  }
+
+  // Spaced review of ONE verse. Retrieval comes first and cold: the learner
+  // is shown only the address and has to produce the verse. If that goes
+  // well it is the whole review (one successful, effortful retrieval is the
+  // strongest memory-builder there is). If not, `buildRemedial` gives a short
+  // scaffolded path back up to a second, successful recall.
+  function buildSpacedReview(text, ref = null) {
+    return [{ type: "recall", text, ref, cold: true, base: 30 }];
+  }
+
+  function buildRemedial(text, ref = null) {
+    return [
+      { type: "letters", text, ref, base: 10 },
+      { type: "blanks", text, ref, ratio: 0.35, bank: false, base: 10 },
+      { type: "recall", text, ref, final: true, base: 15 }
+    ];
   }
 
   return {
@@ -507,6 +633,9 @@ const Challenges = (() => {
     splitPunct,
     alignWords,
     gradeRecall,
+    stripReference,
+    makeRefOptions,
+    THINK_PROMPTS,
     gradeTyped,
     gradeSpoken,
     splitPhrases,
@@ -524,7 +653,9 @@ const Challenges = (() => {
     hintWords,
     shuffle,
     buildLadder,
-    buildReviewLadder
+    buildReviewLadder,
+    buildSpacedReview,
+    buildRemedial
   };
 })();
 

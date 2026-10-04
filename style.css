@@ -363,3 +363,49 @@ h3 { font-weight: 800; }
   .stat { padding: 3px 7px; font-size: 0.85rem; }
   .brand { font-size: 1.15rem; }
 }
+
+/* ------------------------------------------- v0.24 memory-science additions */
+.review-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: var(--card); border: 2px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; margin: 6px 0 14px; box-shadow: var(--shadow);
+}
+.review-banner strong { display: block; }
+.review-banner small { display: block; color: var(--muted); font-weight: 700; margin-top: 2px; }
+.review-banner .btn { margin-top: 0; }
+.review-banner.due { background: #f1ebff; border-color: #c9bbff; box-shadow: 0 2px 0 #c9bbff; }
+.review-banner.caught-up { background: var(--primary-soft); border-color: #a7d37a; box-shadow: 0 2px 0 #a7d37a; }
+.science-link { margin-top: 18px; }
+.due-badge {
+  display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px;
+  background: #6b4ce0; color: #fff; font-size: 0.72rem; font-weight: 800; vertical-align: middle;
+}
+
+.ref-tag {
+  display: inline-block; background: var(--highlight); border: 2px solid var(--highlight-edge);
+  border-radius: 999px; padding: 4px 14px; font-weight: 800; margin: 0 0 10px;
+}
+.verse-text.chunked .chunk { display: block; }
+.verse-text.chunked .chunk + .chunk { margin-top: 2px; }
+.think-prompt { font-weight: 800; font-size: 1.1rem; margin: 10px 0; }
+.your-note { background: var(--highlight); border-radius: 10px; padding: 8px 12px; font-weight: 700; margin: 8px 0 0; }
+
+.review-card {
+  background: #f1ebff; border: 2px solid #c9bbff; border-radius: var(--radius);
+  padding: 12px 16px; margin: 10px 0;
+}
+.review-card strong { display: block; }
+.review-card small { display: block; color: var(--muted); font-weight: 700; margin-top: 2px; }
+.review-list { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.review-row {
+  display: flex; align-items: center; gap: 10px; background: var(--card);
+  border: 2px solid var(--border); border-radius: 12px; padding: 8px 12px;
+}
+.review-ref { flex: 1; font-weight: 800; min-width: 0; }
+.review-when { color: var(--muted); font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+
+.technique .why { margin: 0 0 8px; }
+.technique .how { margin: 0; color: var(--muted); }
+.technique .how strong { color: var(--primary-dark); }
+.technique.tips ul { margin: 0; padding-left: 20px; }
+.technique.tips li { margin-bottom: 6px; }

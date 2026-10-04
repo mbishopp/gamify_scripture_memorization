@@ -1,4 +1,4 @@
-# Verses — Scripture Memorization (v0.22)
+# Verses — Scripture Memorization (v0.24)
 
 A Duolingo-style web game for memorizing Bible passages, built as a
 single static site (plain HTML/CSS/JS, no build step, no backend).
@@ -92,11 +92,12 @@ style.css            styling
 js/bible-data.js      static book/chapter list + translation list
 js/bible-api.js       fetch wrapper around bible-api.com
 js/challenges.js      grading logic for each challenge type (pure functions)
+js/spacing.js         spaced-repetition scheduling (pure functions)
 js/game.js            localStorage-backed progress/coins/xp/streak/settings
 js/speech.js          text-to-speech (best natural voice) + speech recognition
 js/ui.js              home, passage picker, settings screens
 js/lesson.js          lesson units, exercise runner, scoring/retries
-tests/                node tests for the grading logic (node tests/challenges.test.js)
+tests/                node tests (node tests/challenges.test.js, node tests/spacing.test.js)
 ```
 
 ## Roadmap (later versions)
@@ -107,7 +108,32 @@ tests/                node tests for the grading logic (node tests/challenges.te
 ## Roadmap now
 - v0.22: Have a way for the learner to listen to the verse (voice needs to be a more natural speech reader--not a computer sounding one).  This is for when a verse(s) is first displayed (but is optional if the learner wants to listen to the verse).  There needs to be way more ways to practice.  Try first letters taken out, going in small bits (parts of 1st verse; then another part, etc.). The other methods are good, but don't have so many blanks words at first.  Build this up over a few trials. There should be at least 7-10 ways to do each verse in varying forms of difficulty.  Typing the verse is one thing, but saying it is better, so emphasize that.  If a person needs a hint, especially when they are at the write the (entire) verse or say the verse, this should give the first couple of words to get people on the right track.  Allow for try again buttons, but each time reduce the points that are awarded (1st time backwards, is 80% of the points, second is 60% points, 3rd is 30% points).  But if a person wants to use coins to pay for full points, they can do that too.  So if they go back and pay 40 coins, then it is 100% points, 20 coins it is 60% points, etc.  Allow a person to skip any of the lessons, such as speaking (because they might be in a place where they cannot speak).  Always provide a skip button, but do not award any points for skipping.
 
+## How it applies memory science (v0.24)
+
+| Technique (research) | What Verses does |
+| --- | --- |
+| Testing effect: retrieving beats re-reading | Every exercise asks the learner to produce words; scaffolds fade from many blanks, to first letters, to nothing |
+| Spacing effect + successive relearning | Finishing a verse schedules reviews at 1, 3, 7, 14, 30, 60, 120, 240 days. A clean first-try recall advances the box, a shaky one comes back sooner, a miss drops back and returns tomorrow (`js/spacing.js`) |
+| Sleep consolidation | First review is always the next day |
+| Production effect | Speaking is the default answer mode; the read step asks you to read aloud |
+| Chunking | Verses are shown phrase by phrase; long ones are built up part by part |
+| Elaboration / depth of processing | "Make it meaningful" step (picture it, own words, personal link); an optional note is saved and shown at review time |
+| Memorizing the address | Reference shown with the verse, a "where is this found?" question, and recall exercises ask for the reference first (a spoken or typed reference is not penalised) |
+| Interleaving | Daily review mixes verses from every passage in random order |
+| Targeted feedback | Words you miss are collected and drilled together before the final recall |
+| Desirable difficulty / honest measurement | Review starts with a cold recall from the address only; scheduling uses the first-try accuracy, and using a hint stops the box from advancing |
+
+The home screen shows a **Daily review** card with how many verses are due,
+and an in-app "How Verses helps you remember" page explains each technique.
+
 ## Changelog
+- v0.24: Memory-science pass. Spaced-repetition review (Daily review on the
+  home screen, due badges on the path, next-review card after each lesson).
+  Retrieval-first reviews with a scaffolded fallback. New exercises: "make
+  it meaningful" (with saved note), "where is this verse found?", and an
+  adaptive tricky-words drill built from the words you missed. Verses are
+  shown in phrase chunks with their reference; recall exercises accept a
+  spoken/typed reference. New "How Verses helps you remember" page.
 - v0.23: Roadmap v0.2 wrapped up. The visual book/chapter browser (v0.21)
   and lenient speech grading (v0.22) were already in; this adds the
   Open English Bible, Commonwealth Edition (OEB-CW) as a sixth translation.
