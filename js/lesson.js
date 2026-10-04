@@ -337,7 +337,10 @@ const Lesson = (() => {
           tally.coins += res.coins || 0;
           if (res.skipped) tally.skipped++;
         }
-        if (ex.type === "think" && res.note) info.note = res.note;
+        if (ex.type === "think" && res.note) {
+          info.note = res.note;
+          rctx.note = res.note; // available as a hint for the rest of this unit
+        }
         if (ex.final && ex.type === "recall" && !res.skipped && res.firstAccuracy !== null) {
           info.recall = { accuracy: res.firstAccuracy, hinted: res.hinted };
         }
@@ -978,21 +981,43 @@ const Lesson = (() => {
     });
   }
 
+  // Two kinds of hint, the learner's choice: the next words of the verse, or
+  // their own "word picture" note from the make-it-meaningful step.
   function hintControl(api, text) {
     const words = Challenges.tokenize(text);
+    const note = ((api.ctx && api.ctx.note) || "").trim();
     let n = 0;
     const out = el("span", { class: "hint-text" });
-    const btn = el("button", { class: "btn btn-ghost btn-hint", type: "button" }, "💡 Hint");
-    btn.addEventListener("click", () => {
+    const wordsBtn = el("button", { class: "btn btn-ghost btn-hint", type: "button" }, "💡 Next words");
+    wordsBtn.addEventListener("click", () => {
       api.markHinted();
       n += 2;
       const shown = Challenges.hintWords(text, n);
       const more = Challenges.tokenize(shown).length < words.length;
       out.textContent = `“${shown}${more ? " …" : ""}”`;
-      if (Challenges.tokenize(shown).length >= words.length - 1) btn.disabled = true;
-      else btn.textContent = "💡 More";
+      if (Challenges.tokenize(shown).length >= words.length - 1) wordsBtn.disabled = true;
+      else wordsBtn.textContent = "💡 More words";
     });
-    return el("div", { class: "hint-row lockable" }, [btn, out]);
+    const row = el("div", { class: "hint-row lockable" }, [wordsBtn]);
+    const pictureBtn = el(
+      "button",
+      {
+        class: "btn btn-ghost btn-hint",
+        type: "button",
+        title: note ? "Show what you wrote in your own words" : "Write a note in the “make it meaningful” step to use this hint"
+      },
+      "🖼️ My word picture"
+    );
+    if (note) {
+      pictureBtn.addEventListener("click", () => {
+        api.markHinted();
+        out.textContent = `📝 ${note}`;
+      });
+    } else {
+      pictureBtn.disabled = true;
+    }
+    row.append(pictureBtn, out);
+    return row;
   }
 
   // Say-it (default) or type-it answer area.

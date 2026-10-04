@@ -665,7 +665,7 @@ const UI = (() => {
       icon: "💪",
       name: "Make it a little hard",
       why: "Effortful recall that you sometimes miss builds stronger memory than easy recall (“desirable difficulty”). Peeking early robs you of that effect.",
-      how: "Hints show only the first couple of words, and a hint during review means the verse comes back sooner."
+      how: "A hint can be the next words or your own word picture (your note), and any hint during review means the verse comes back sooner."
     }
   ];
 
